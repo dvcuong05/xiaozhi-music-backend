@@ -1,6 +1,28 @@
 const express = require('express');
+const https = require('https');
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Helper to make HTTPS requests
+function httpsGet(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, { timeout: 8000 }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          try {
+            resolve(JSON.parse(data));
+          } catch (e) {
+            reject(new Error('Invalid JSON'));
+          }
+        } else {
+          reject(new Error(`HTTP ${res.statusCode}`));
+        }
+      });
+    }).on('error', reject).on('timeout', () => reject(new Error('Timeout')));
+  });
+}
 
 // CORS for ESP32
 app.use((req, res, next) => {
@@ -39,36 +61,37 @@ app.get('/search', async (req, res) => {
     // Use Invidious API - no cookies required, no yt-dlp needed
     // Public instances: https://api.invidious.io/instances.json
     const invidiousInstances = [
-      'https://invidious.io.lol',
-      'https://inv.tux.pizza',
-      'https://invidious.privacyredirect.com'
+      'invidious.io.lol',
+      'inv.tux.pizza',
+      'invidious.privacyredirect.com',
+      'yt.artemislena.eu',
+      'invidious.slipfox.xyz'
     ];
     
-    let searchResults = null;
-    let audioUrl = null;
+    let lastError = null;
     
     // Try multiple instances for reliability
     for (const instance of invidiousInstances) {
       try {
+        console.log(`[${new Date().toISOString()}] Trying ${instance}...`);
+        
         // Search for video
-        const searchUrl = `${instance}/api/v1/search?q=${encodeURIComponent(q)}&type=video`;
-        const searchResponse = await fetch(searchUrl, { timeout: 10000 });
+        const searchUrl = `https://${instance}/api/v1/search?q=${encodeURIComponent(q)}&type=video`;
+        const videos = await httpsGet(searchUrl);
         
-        if (!searchResponse.ok) continue;
-        
-        const videos = await searchResponse.json();
-        if (!videos || videos.length === 0) continue;
+        if (!videos || videos.length === 0) {
+          lastError = `${instance}: No results`;
+          continue;
+        }
         
         const videoId = videos[0].videoId;
         const title = videos[0].title;
         
+        console.log(`[${new Date().toISOString()}] Found video: ${videoId} - ${title}`);
+        
         // Get audio stream URL
-        const videoUrl = `${instance}/api/v1/videos/${videoId}`;
-        const videoResponse = await fetch(videoUrl, { timeout: 10000 });
-        
-        if (!videoResponse.ok) continue;
-        
-        const videoData = await videoResponse.json();
+        const videoUrl = `https://${instance}/api/v1/videos/${videoId}`;
+        const videoData = await httpsGet(videoUrl);
         
         // Find audio-only stream (format itag 251 = Opus, 140 = AAC)
         const audioStream = videoData.adaptiveFormats?.find(f => 
@@ -76,31 +99,28 @@ app.get('/search', async (req, res) => {
         ) || videoData.adaptiveFormats?.find(f => f.type?.startsWith('audio/'));
         
         if (audioStream && audioStream.url) {
-          audioUrl = audioStream.url;
-          searchResults = { title, videoId };
-          console.log(`[${new Date().toISOString()}] Found via ${instance}: ${title}`);
-          break;
+          console.log(`[${new Date().toISOString()}] Success via ${instance}: ${title}`);
+          console.log(`[${new Date().toISOString()}] URL: ${audioStream.url.substring(0, 80)}...`);
+
+          return res.json({
+            success: true,
+            title: title,
+            url: audioStream.url,
+            format: audioStream.type || 'audio/webm',
+            source: 'invidious',
+            quality: 'audio'
+          });
+        } else {
+          lastError = `${instance}: No audio stream found`;
         }
       } catch (err) {
-        console.log(`[${new Date().toISOString()}] ${instance} failed: ${err.message}`);
+        lastError = `${instance}: ${err.message}`;
+        console.log(`[${new Date().toISOString()}] ${lastError}`);
         continue;
       }
     }
     
-    if (!audioUrl || !searchResults) {
-      throw new Error('All Invidious instances failed or no audio stream found');
-    }
-
-    console.log(`[${new Date().toISOString()}] URL: ${audioUrl.substring(0, 80)}...`);
-
-    res.json({
-      success: true,
-      title: searchResults.title,
-      url: audioUrl,
-      format: 'audio/webm',
-      source: 'invidious',
-      quality: 'audio'
-    });
+    throw new Error(`All Invidious instances failed. Last: ${lastError}`);
 
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error:`, error.message);
