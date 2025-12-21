@@ -41,8 +41,8 @@ app.get('/search', async (req, res) => {
     console.log(`[${new Date().toISOString()}] Searching: ${q}`);
 
     // Use yt-dlp with extractor-args to avoid bot detection
-    // Use bestaudio for Opus format (natively supported by ESP32)
-    const cmd = `yt-dlp -f "bestaudio/best" --extractor-args "youtube:player_client=android" --get-url --get-title "ytsearch1:${q}"`;
+    // Force audio-only formats (251=opus, 140=m4a) for ESP32 compatibility
+    const cmd = `yt-dlp -f "251/140/bestaudio" --extractor-args "youtube:player_client=android" --get-url --get-title "ytsearch1:${q}"`;
     
     const { stdout, stderr } = await execPromise(cmd, {
       timeout: 30000 // 30s timeout
