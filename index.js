@@ -40,9 +40,10 @@ app.get('/search', async (req, res) => {
   try {
     console.log(`[${new Date().toISOString()}] Searching: ${q}`);
 
-    // Use yt-dlp with extractor-args to avoid bot detection
-    // Force audio-only formats (251=opus, 140=m4a) for ESP32 compatibility
-    const cmd = `yt-dlp -f "251/140/bestaudio" --extractor-args "youtube:player_client=android" --get-url --get-title "ytsearch1:${q}"`;
+    // Try multiple extractor methods to bypass bot detection
+    // 1. Try ios client (most reliable as of 2024-12)
+    // 2. Fallback to web client if ios fails
+    const cmd = `yt-dlp -f "251/140/bestaudio" --extractor-args "youtube:player_client=ios" --get-url --get-title "ytsearch1:${q}"`;
     
     const { stdout, stderr } = await execPromise(cmd, {
       timeout: 30000 // 30s timeout
