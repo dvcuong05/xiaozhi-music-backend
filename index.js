@@ -1,8 +1,4 @@
 const express = require('express');
-const { exec } = require('child_process');
-const { promisify } = require('util');
-
-const execPromise = promisify(exec);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -28,7 +24,7 @@ app.get('/', (req, res) => {
 
 // Search endpoint
 app.get('/search', async (req, res) => {
-  const { q, format = 'worstaudio' } = req.query;
+  const { q } = req.query;
 
   if (!q) {
     return res.status(400).json({ 
@@ -40,40 +36,70 @@ app.get('/search', async (req, res) => {
   try {
     console.log(`[${new Date().toISOString()}] Searching: ${q}`);
 
-    // Use tv_embedded client - most reliable without requiring po_token (as of 2024-12)
-    // Format 251 = Opus (WebM), 140 = AAC (MP4)
-    const cmd = `yt-dlp -f "251/140/bestaudio" --extractor-args "youtube:player_client=tv_embedded" --get-url --get-title "ytsearch1:${q}"`;
+    // Use Invidious API - no cookies required, no yt-dlp needed
+    // Public instances: https://api.invidious.io/instances.json
+    const invidiousInstances = [
+      'https://invidious.io.lol',
+      'https://inv.tux.pizza',
+      'https://invidious.privacyredirect.com'
+    ];
     
-    const { stdout, stderr } = await execPromise(cmd, {
-      timeout: 30000 // 30s timeout
-    });
-
-    if (stderr && !stdout) {
-      throw new Error(`yt-dlp error: ${stderr}`);
+    let searchResults = null;
+    let audioUrl = null;
+    
+    // Try multiple instances for reliability
+    for (const instance of invidiousInstances) {
+      try {
+        // Search for video
+        const searchUrl = `${instance}/api/v1/search?q=${encodeURIComponent(q)}&type=video`;
+        const searchResponse = await fetch(searchUrl, { timeout: 10000 });
+        
+        if (!searchResponse.ok) continue;
+        
+        const videos = await searchResponse.json();
+        if (!videos || videos.length === 0) continue;
+        
+        const videoId = videos[0].videoId;
+        const title = videos[0].title;
+        
+        // Get audio stream URL
+        const videoUrl = `${instance}/api/v1/videos/${videoId}`;
+        const videoResponse = await fetch(videoUrl, { timeout: 10000 });
+        
+        if (!videoResponse.ok) continue;
+        
+        const videoData = await videoResponse.json();
+        
+        // Find audio-only stream (format itag 251 = Opus, 140 = AAC)
+        const audioStream = videoData.adaptiveFormats?.find(f => 
+          f.type?.startsWith('audio/') && (f.itag === 251 || f.itag === 140)
+        ) || videoData.adaptiveFormats?.find(f => f.type?.startsWith('audio/'));
+        
+        if (audioStream && audioStream.url) {
+          audioUrl = audioStream.url;
+          searchResults = { title, videoId };
+          console.log(`[${new Date().toISOString()}] Found via ${instance}: ${title}`);
+          break;
+        }
+      } catch (err) {
+        console.log(`[${new Date().toISOString()}] ${instance} failed: ${err.message}`);
+        continue;
+      }
+    }
+    
+    if (!audioUrl || !searchResults) {
+      throw new Error('All Invidious instances failed or no audio stream found');
     }
 
-    const lines = stdout.trim().split('\n');
-    if (lines.length < 2) {
-      throw new Error('Invalid yt-dlp output');
-    }
-
-    const title = lines[0];
-    const url = lines[1];
-
-    if (!url || !url.startsWith('http')) {
-      throw new Error('Failed to extract audio URL');
-    }
-
-    console.log(`[${new Date().toISOString()}] Found: ${title}`);
-    console.log(`[${new Date().toISOString()}] URL: ${url.substring(0, 80)}...`);
+    console.log(`[${new Date().toISOString()}] URL: ${audioUrl.substring(0, 80)}...`);
 
     res.json({
       success: true,
-      title: title,
-      url: url,
-      format: 'audio/mp4',
-      source: 'youtube',
-      quality: format
+      title: searchResults.title,
+      url: audioUrl,
+      format: 'audio/webm',
+      source: 'invidious',
+      quality: 'audio'
     });
 
   } catch (error) {
