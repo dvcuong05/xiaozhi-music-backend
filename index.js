@@ -13,13 +13,30 @@ function resolveRedirects(url, maxRedirects = 5) {
       return resolve(url);
     }
     
-    https.get(url, { method: 'HEAD', timeout: 5000 }, (res) => {
+    const urlObj = new URL(url);
+    const options = {
+      hostname: urlObj.hostname,
+      path: urlObj.pathname + urlObj.search,
+      method: 'GET',
+      headers: {
+        'Range': 'bytes=0-0',  // Request only 1 byte to trigger redirect
+        'User-Agent': 'Mozilla/5.0'
+      },
+      timeout: 5000
+    };
+    
+    https.request(options, (res) => {
+      res.resume(); // Drain response
+      
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        resolveRedirects(res.headers.location, maxRedirects - 1).then(resolve).catch(reject);
+        const nextUrl = res.headers.location.startsWith('http') 
+          ? res.headers.location 
+          : new URL(res.headers.location, url).href;
+        resolveRedirects(nextUrl, maxRedirects - 1).then(resolve).catch(reject);
       } else {
         resolve(url);
       }
-    }).on('error', () => resolve(url)); // Fallback to original URL on error
+    }).on('error', () => resolve(url)).end();
   });
 }
 
