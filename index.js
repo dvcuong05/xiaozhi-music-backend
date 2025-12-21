@@ -1,40 +1,9 @@
 const express = require('express');
-const https = require('https');
+const ytdl = require('@distube/ytdl-core');
+const YouTube = require('youtube-sr').default;
+
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// Helper to make HTTPS requests with redirect support
-function httpsGet(url, redirectCount = 0) {
-  return new Promise((resolve, reject) => {
-    if (redirectCount > 3) {
-      return reject(new Error('Too many redirects'));
-    }
-    
-    https.get(url, { timeout: 8000 }, (res) => {
-      // Handle redirects
-      if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) {
-        const location = res.headers.location;
-        if (location) {
-          return httpsGet(location, redirectCount + 1).then(resolve).catch(reject);
-        }
-      }
-      
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        if (res.statusCode === 200) {
-          try {
-            resolve(JSON.parse(data));
-          } catch (e) {
-            reject(new Error('Invalid JSON'));
-          }
-        } else {
-          reject(new Error(`HTTP ${res.statusCode}`));
-        }
-      });
-    }).on('error', reject).on('timeout', () => reject(new Error('Timeout')));
-  });
-}
 
 // CORS for ESP32
 app.use((req, res, next) => {
@@ -70,120 +39,40 @@ app.get('/search', async (req, res) => {
   try {
     console.log(`[${new Date().toISOString()}] Searching: ${q}`);
 
-    // Try Piped API first (more stable)
-    const pipedInstances = [
-      'pipedapi.kavin.rocks',
-      'api-piped.mha.fi',
-      'pipedapi.adminforge.de'
-    ];
+    // Search YouTube
+    const searchResults = await YouTube.searchOne(q, 'video');
     
-    for (const instance of pipedInstances) {
-      try {
-        console.log(`[${new Date().toISOString()}] Trying Piped: ${instance}...`);
-        
-        const searchUrl = `https://${instance}/search?q=${encodeURIComponent(q)}&filter=videos`;
-        const searchResults = await httpsGet(searchUrl);
-        
-        if (!searchResults || !searchResults.items || searchResults.items.length === 0) {
-          continue;
-        }
-        
-        const video = searchResults.items[0];
-        const videoId = video.url?.replace('/watch?v=', '');
-        const title = video.title;
-        
-        if (!videoId) continue;
-        
-        console.log(`[${new Date().toISOString()}] Found: ${videoId} - ${title}`);
-        
-        const streamUrl = `https://${instance}/streams/${videoId}`;
-        const streamData = await httpsGet(streamUrl);
-        
-        // Find audio stream
-        const audioStream = streamData.audioStreams?.find(s => 
-          s.format === 'WEBMA_OPUS' || s.format === 'M4A'
-        ) || streamData.audioStreams?.[0];
-        
-        if (audioStream && audioStream.url) {
-          console.log(`[${new Date().toISOString()}] Success via Piped ${instance}: ${title}`);
-          
-          return res.json({
-            success: true,
-            title: title,
-            url: audioStream.url,
-            format: audioStream.mimeType || 'audio/webm',
-            source: 'piped',
-            quality: 'audio'
-          });
-        }
-      } catch (err) {
-        console.log(`[${new Date().toISOString()}] Piped ${instance} failed: ${err.message}`);
-        continue;
-      }
-    }
-
-    // Fallback to Invidious API
-    const invidiousInstances = [
-      'invidious.io.lol',
-      'inv.tux.pizza',
-      'invidious.privacyredirect.com',
-      'yt.artemislena.eu',
-      'invidious.slipfox.xyz'
-    ];
-    
-    let lastError = null;
-    
-    // Try multiple instances for reliability
-    for (const instance of invidiousInstances) {
-      try {
-        console.log(`[${new Date().toISOString()}] Trying ${instance}...`);
-        
-        // Search for video
-        const searchUrl = `https://${instance}/api/v1/search?q=${encodeURIComponent(q)}&type=video`;
-        const videos = await httpsGet(searchUrl);
-        
-        if (!videos || videos.length === 0) {
-          lastError = `${instance}: No results`;
-          continue;
-        }
-        
-        const videoId = videos[0].videoId;
-        const title = videos[0].title;
-        
-        console.log(`[${new Date().toISOString()}] Found video: ${videoId} - ${title}`);
-        
-        // Get audio stream URL
-        const videoUrl = `https://${instance}/api/v1/videos/${videoId}`;
-        const videoData = await httpsGet(videoUrl);
-        
-        // Find audio-only stream (format itag 251 = Opus, 140 = AAC)
-        const audioStream = videoData.adaptiveFormats?.find(f => 
-          f.type?.startsWith('audio/') && (f.itag === 251 || f.itag === 140)
-        ) || videoData.adaptiveFormats?.find(f => f.type?.startsWith('audio/'));
-        
-        if (audioStream && audioStream.url) {
-          console.log(`[${new Date().toISOString()}] Success via ${instance}: ${title}`);
-          console.log(`[${new Date().toISOString()}] URL: ${audioStream.url.substring(0, 80)}...`);
-
-          return res.json({
-            success: true,
-            title: title,
-            url: audioStream.url,
-            format: audioStream.type || 'audio/webm',
-            source: 'invidious',
-            quality: 'audio'
-          });
-        } else {
-          lastError = `${instance}: No audio stream found`;
-        }
-      } catch (err) {
-        lastError = `${instance}: ${err.message}`;
-        console.log(`[${new Date().toISOString()}] ${lastError}`);
-        continue;
-      }
+    if (!searchResults) {
+      throw new Error('No video found');
     }
     
-    throw new Error(`All instances failed (Piped + Invidious). Last: ${lastError}`);
+    const videoUrl = `https://www.youtube.com/watch?v=${searchResults.id}`;
+    const title = searchResults.title;
+    
+    console.log(`[${new Date().toISOString()}] Found: ${title} (${searchResults.id})`);
+    
+    // Get audio stream info (format 140 = M4A audio, 251 = WEBM Opus)
+    const info = await ytdl.getInfo(videoUrl);
+    const audioFormat = ytdl.chooseFormat(info.formats, { 
+      quality: 'lowestaudio',
+      filter: 'audioonly'
+    });
+    
+    if (!audioFormat || !audioFormat.url) {
+      throw new Error('No audio stream found');
+    }
+    
+    console.log(`[${new Date().toISOString()}] Success: ${audioFormat.container} ${audioFormat.audioBitrate}kbps`);
+
+    res.json({
+      success: true,
+      title: title,
+      url: audioFormat.url,
+      format: audioFormat.mimeType || 'audio/mp4',
+      source: 'youtube',
+      quality: 'audio',
+      bitrate: audioFormat.audioBitrate
+    });
 
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error:`, error.message);
