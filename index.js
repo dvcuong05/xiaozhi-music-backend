@@ -3,10 +3,22 @@ const https = require('https');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Helper to make HTTPS requests
-function httpsGet(url) {
+// Helper to make HTTPS requests with redirect support
+function httpsGet(url, redirectCount = 0) {
   return new Promise((resolve, reject) => {
+    if (redirectCount > 3) {
+      return reject(new Error('Too many redirects'));
+    }
+    
     https.get(url, { timeout: 8000 }, (res) => {
+      // Handle redirects
+      if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) {
+        const location = res.headers.location;
+        if (location) {
+          return httpsGet(location, redirectCount + 1).then(resolve).catch(reject);
+        }
+      }
+      
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
@@ -58,8 +70,59 @@ app.get('/search', async (req, res) => {
   try {
     console.log(`[${new Date().toISOString()}] Searching: ${q}`);
 
-    // Use Invidious API - no cookies required, no yt-dlp needed
-    // Public instances: https://api.invidious.io/instances.json
+    // Try Piped API first (more stable)
+    const pipedInstances = [
+      'pipedapi.kavin.rocks',
+      'api-piped.mha.fi',
+      'pipedapi.adminforge.de'
+    ];
+    
+    for (const instance of pipedInstances) {
+      try {
+        console.log(`[${new Date().toISOString()}] Trying Piped: ${instance}...`);
+        
+        const searchUrl = `https://${instance}/search?q=${encodeURIComponent(q)}&filter=videos`;
+        const searchResults = await httpsGet(searchUrl);
+        
+        if (!searchResults || !searchResults.items || searchResults.items.length === 0) {
+          continue;
+        }
+        
+        const video = searchResults.items[0];
+        const videoId = video.url?.replace('/watch?v=', '');
+        const title = video.title;
+        
+        if (!videoId) continue;
+        
+        console.log(`[${new Date().toISOString()}] Found: ${videoId} - ${title}`);
+        
+        const streamUrl = `https://${instance}/streams/${videoId}`;
+        const streamData = await httpsGet(streamUrl);
+        
+        // Find audio stream
+        const audioStream = streamData.audioStreams?.find(s => 
+          s.format === 'WEBMA_OPUS' || s.format === 'M4A'
+        ) || streamData.audioStreams?.[0];
+        
+        if (audioStream && audioStream.url) {
+          console.log(`[${new Date().toISOString()}] Success via Piped ${instance}: ${title}`);
+          
+          return res.json({
+            success: true,
+            title: title,
+            url: audioStream.url,
+            format: audioStream.mimeType || 'audio/webm',
+            source: 'piped',
+            quality: 'audio'
+          });
+        }
+      } catch (err) {
+        console.log(`[${new Date().toISOString()}] Piped ${instance} failed: ${err.message}`);
+        continue;
+      }
+    }
+
+    // Fallback to Invidious API
     const invidiousInstances = [
       'invidious.io.lol',
       'inv.tux.pizza',
@@ -120,7 +183,7 @@ app.get('/search', async (req, res) => {
       }
     }
     
-    throw new Error(`All Invidious instances failed. Last: ${lastError}`);
+    throw new Error(`All instances failed (Piped + Invidious). Last: ${lastError}`);
 
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error:`, error.message);
