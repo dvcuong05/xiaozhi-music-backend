@@ -40,10 +40,9 @@ app.get('/search', async (req, res) => {
   try {
     console.log(`[${new Date().toISOString()}] Searching: ${q}`);
 
-    // Use yt-dlp to search and extract audio URL
-    // Add --cookies-from-browser chrome to bypass bot detection
-    // Use bestaudio for better quality (Opus format)
-    const cmd = `yt-dlp -f "bestaudio/best" --cookies-from-browser chrome --get-url --get-title "ytsearch1:${q}"`;
+    // Use yt-dlp with extractor-args to avoid bot detection
+    // Use bestaudio for Opus format (natively supported by ESP32)
+    const cmd = `yt-dlp -f "bestaudio/best" --extractor-args "youtube:player_client=android" --get-url --get-title "ytsearch1:${q}"`;
     
     const { stdout, stderr } = await execPromise(cmd, {
       timeout: 30000 // 30s timeout
