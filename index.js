@@ -131,17 +131,27 @@ app.get('/stream/:videoId', async (req, res) => {
       res.setHeader('Content-Length', audioFormat.contentLength);
     }
 
-    // Stream from YouTube to ESP32 (proxy)
-    const audioStream = ytdl(videoUrl, { format: audioFormat });
-    
-    audioStream.on('error', (err) => {
-      console.error(`[${new Date().toISOString()}] Stream error:`, err.message);
+    // Fetch from YouTube CDN and pipe to ESP32
+    https.get(audioFormat.url, (ytResponse) => {
+      if (ytResponse.statusCode !== 200) {
+        console.error(`[${new Date().toISOString()}] YouTube returned: ${ytResponse.statusCode}`);
+        if (!res.headersSent) {
+          res.status(500).end();
+        }
+        return;
+      }
+      
+      ytResponse.pipe(res);
+      
+      ytResponse.on('error', (err) => {
+        console.error(`[${new Date().toISOString()}] YouTube stream error:`, err.message);
+      });
+    }).on('error', (err) => {
+      console.error(`[${new Date().toISOString()}] HTTPS request error:`, err.message);
       if (!res.headersSent) {
         res.status(500).end();
       }
     });
-
-    audioStream.pipe(res);
 
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Stream error:`, error.message);
