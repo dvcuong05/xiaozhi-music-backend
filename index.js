@@ -98,15 +98,17 @@ app.get('/search', async (req, res) => {
     }
     
     console.log(`[${new Date().toISOString()}] Resolving redirects...`);
+    
+    // Resolve redirects to get final URL (without redirect_counter parameter)
     const finalUrl = await resolveRedirects(audioFormat.url);
     
     console.log(`[${new Date().toISOString()}] Success: ${audioFormat.container} ${audioFormat.audioBitrate}kbps`);
-    console.log(`[${new Date().toISOString()}] Final URL: ${finalUrl.substring(0, 100)}...`);
+    console.log(`[${new Date().toISOString()}] Final URL length: ${finalUrl.length} chars`);
 
     res.json({
       success: true,
       title: title,
-      url: finalUrl,
+      url: finalUrl,  // Return resolved final URL
       format: audioFormat.mimeType || 'audio/mp4',
       source: 'youtube',
       quality: 'audio',
