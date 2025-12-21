@@ -1,16 +1,17 @@
 const express = require('express');
 const https = require('https');
+const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Free MP3 radio stations (always available, no auth needed)
 const RADIO_STATIONS = {
-  'chill': 'https://streams.ilovemusic.de/iloveradio17.mp3', // Chill
-  'pop': 'https://streams.ilovemusic.de/iloveradio2.mp3',    // Pop hits
-  'dance': 'https://streams.ilovemusic.de/iloveradio3.mp3',  // Dance
-  'rock': 'https://streams.ilovemusic.de/iloveradio8.mp3',   // Rock
-  'lofi': 'https://streams.lofiradio.com/lofi',               // Lo-fi beats
+  'chill': 'http://ice1.somafm.com/groovesalad-128-mp3',      // Chill/Ambient
+  'pop': 'http://ice1.somafm.com/indiepop-128-mp3',           // Indie Pop
+  'electronic': 'http://ice1.somafm.com/defcon-128-mp3',      // Electronic
+  'rock': 'http://ice1.somafm.com/deepspaceone-128-mp3',      // Space Rock
+  'lofi': 'http://ice1.somafm.com/fluid-128-mp3',             // Lo-fi beats
 };
 
 // CORS for ESP32
@@ -110,8 +111,8 @@ app.get('/stream/:station', async (req, res) => {
   try {
     console.log(`[${new Date().toISOString()}] Streaming: ${station} -> ${streamUrl}`);
 
-    // Proxy radio stream
-    https.get(streamUrl, (streamRes) => {
+    // Proxy radio stream (use http for SomaFM)
+    http.get(streamUrl, (streamRes) => {
       if (streamRes.statusCode !== 200) {
         console.error(`[${new Date().toISOString()}] Radio returned: ${streamRes.statusCode}`);
         return res.status(500).json({ success: false, error: 'Stream unavailable' });
