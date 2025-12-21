@@ -132,7 +132,7 @@ app.get('/stream/:videoId', async (req, res) => {
     }
 
     // Stream from YouTube to ESP32 (proxy)
-    const audioStream = ytdl.downloadFromInfo(info, { format: audioFormat });
+    const audioStream = ytdl(videoUrl, { format: audioFormat });
     
     audioStream.on('error', (err) => {
       console.error(`[${new Date().toISOString()}] Stream error:`, err.message);
