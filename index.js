@@ -60,7 +60,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// Search endpoint
+// Search endpoint - returns metadata only
 app.get('/search', async (req, res) => {
   const { q } = req.query;
 
@@ -81,38 +81,16 @@ app.get('/search', async (req, res) => {
       throw new Error('No video found');
     }
     
-    const videoUrl = `https://www.youtube.com/watch?v=${searchResults.id}`;
+    const videoId = searchResults.id;
     const title = searchResults.title;
     
-    console.log(`[${new Date().toISOString()}] Found: ${title} (${searchResults.id})`);
-    
-    // Get audio stream info (format 140 = M4A audio, 251 = WEBM Opus)
-    const info = await ytdl.getInfo(videoUrl);
-    const audioFormat = ytdl.chooseFormat(info.formats, { 
-      quality: 'lowestaudio',
-      filter: 'audioonly'
-    });
-    
-    if (!audioFormat || !audioFormat.url) {
-      throw new Error('No audio stream found');
-    }
-    
-    console.log(`[${new Date().toISOString()}] Resolving redirects...`);
-    
-    // Resolve redirects to get final URL (without redirect_counter parameter)
-    const finalUrl = await resolveRedirects(audioFormat.url);
-    
-    console.log(`[${new Date().toISOString()}] Success: ${audioFormat.container} ${audioFormat.audioBitrate}kbps`);
-    console.log(`[${new Date().toISOString()}] Final URL length: ${finalUrl.length} chars`);
+    console.log(`[${new Date().toISOString()}] Found: ${title} (${videoId})`);
 
     res.json({
       success: true,
       title: title,
-      url: finalUrl,  // Return resolved final URL
-      format: audioFormat.mimeType || 'audio/mp4',
-      source: 'youtube',
-      quality: 'audio',
-      bitrate: audioFormat.audioBitrate
+      videoId: videoId,
+      streamUrl: `/stream/${videoId}`  // ESP32 will call this endpoint
     });
 
   } catch (error) {
@@ -122,6 +100,54 @@ app.get('/search', async (req, res) => {
       success: false,
       error: error.message
     });
+  }
+});
+
+// Stream endpoint - proxies audio from YouTube to ESP32
+app.get('/stream/:videoId', async (req, res) => {
+  const { videoId } = req.params;
+
+  try {
+    console.log(`[${new Date().toISOString()}] Streaming: ${videoId}`);
+
+    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    
+    // Get audio stream
+    const info = await ytdl.getInfo(videoUrl);
+    const audioFormat = ytdl.chooseFormat(info.formats, { 
+      quality: 'lowestaudio',
+      filter: 'audioonly'
+    });
+    
+    if (!audioFormat || !audioFormat.url) {
+      throw new Error('No audio stream found');
+    }
+
+    console.log(`[${new Date().toISOString()}] Proxying ${audioFormat.container} ${audioFormat.audioBitrate}kbps`);
+
+    // Set headers for ESP32
+    res.setHeader('Content-Type', audioFormat.mimeType || 'audio/mp4');
+    if (audioFormat.contentLength) {
+      res.setHeader('Content-Length', audioFormat.contentLength);
+    }
+
+    // Stream from YouTube to ESP32 (proxy)
+    const audioStream = ytdl.downloadFromInfo(info, { format: audioFormat });
+    
+    audioStream.on('error', (err) => {
+      console.error(`[${new Date().toISOString()}] Stream error:`, err.message);
+      if (!res.headersSent) {
+        res.status(500).end();
+      }
+    });
+
+    audioStream.pipe(res);
+
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Stream error:`, error.message);
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, error: error.message });
+    }
   }
 });
 
