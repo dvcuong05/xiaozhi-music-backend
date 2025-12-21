@@ -1,9 +1,27 @@
 const express = require('express');
+const https = require('https');
 const ytdl = require('@distube/ytdl-core');
 const YouTube = require('youtube-sr').default;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Helper to resolve redirects and return final URL
+function resolveRedirects(url, maxRedirects = 5) {
+  return new Promise((resolve, reject) => {
+    if (maxRedirects === 0) {
+      return resolve(url);
+    }
+    
+    https.get(url, { method: 'HEAD', timeout: 5000 }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        resolveRedirects(res.headers.location, maxRedirects - 1).then(resolve).catch(reject);
+      } else {
+        resolve(url);
+      }
+    }).on('error', () => resolve(url)); // Fallback to original URL on error
+  });
+}
 
 // CORS for ESP32
 app.use((req, res, next) => {
@@ -62,12 +80,16 @@ app.get('/search', async (req, res) => {
       throw new Error('No audio stream found');
     }
     
+    console.log(`[${new Date().toISOString()}] Resolving redirects...`);
+    const finalUrl = await resolveRedirects(audioFormat.url);
+    
     console.log(`[${new Date().toISOString()}] Success: ${audioFormat.container} ${audioFormat.audioBitrate}kbps`);
+    console.log(`[${new Date().toISOString()}] Final URL: ${finalUrl.substring(0, 100)}...`);
 
     res.json({
       success: true,
       title: title,
-      url: audioFormat.url,
+      url: finalUrl,
       format: audioFormat.mimeType || 'audio/mp4',
       source: 'youtube',
       quality: 'audio',
