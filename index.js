@@ -1,44 +1,17 @@
 const express = require('express');
 const https = require('https');
-const ytdl = require('@distube/ytdl-core');
-const YouTube = require('youtube-sr').default;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Helper to resolve redirects and return final URL
-function resolveRedirects(url, maxRedirects = 5) {
-  return new Promise((resolve, reject) => {
-    if (maxRedirects === 0) {
-      return resolve(url);
-    }
-    
-    const urlObj = new URL(url);
-    const options = {
-      hostname: urlObj.hostname,
-      path: urlObj.pathname + urlObj.search,
-      method: 'GET',
-      headers: {
-        'Range': 'bytes=0-0',  // Request only 1 byte to trigger redirect
-        'User-Agent': 'Mozilla/5.0'
-      },
-      timeout: 5000
-    };
-    
-    https.request(options, (res) => {
-      res.resume(); // Drain response
-      
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        const nextUrl = res.headers.location.startsWith('http') 
-          ? res.headers.location 
-          : new URL(res.headers.location, url).href;
-        resolveRedirects(nextUrl, maxRedirects - 1).then(resolve).catch(reject);
-      } else {
-        resolve(url);
-      }
-    }).on('error', () => resolve(url)).end();
-  });
-}
+// Free MP3 radio stations (always available, no auth needed)
+const RADIO_STATIONS = {
+  'chill': 'https://streams.ilovemusic.de/iloveradio17.mp3', // Chill
+  'pop': 'https://streams.ilovemusic.de/iloveradio2.mp3',    // Pop hits
+  'dance': 'https://streams.ilovemusic.de/iloveradio3.mp3',  // Dance
+  'rock': 'https://streams.ilovemusic.de/iloveradio8.mp3',   // Rock
+  'lofi': 'https://streams.lofiradio.com/lofi',               // Lo-fi beats
+};
 
 // CORS for ESP32
 app.use((req, res, next) => {
@@ -56,11 +29,20 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'OK', 
     service: 'Xiaozhi Music API',
-    endpoints: ['/search?q=song+name']
+    endpoints: ['/search?q=genre', '/stations'],
+    stations: Object.keys(RADIO_STATIONS)
   });
 });
 
-// Search endpoint - returns metadata only
+// List available stations
+app.get('/stations', (req, res) => {
+  res.json({
+    success: true,
+    stations: RADIO_STATIONS
+  });
+});
+
+// Search endpoint - maps keywords to radio stations
 app.get('/search', async (req, res) => {
   const { q } = req.query;
 
@@ -74,23 +56,32 @@ app.get('/search', async (req, res) => {
   try {
     console.log(`[${new Date().toISOString()}] Searching: ${q}`);
 
-    // Search YouTube
-    const searchResults = await YouTube.searchOne(q, 'video');
-    
-    if (!searchResults) {
-      throw new Error('No video found');
+    const query = q.toLowerCase();
+    let station = 'chill'; // default
+    let title = 'Chill Music Radio';
+
+    // Simple keyword matching
+    if (query.includes('pop') || query.includes('hit')) {
+      station = 'pop';
+      title = 'Pop Hits Radio';
+    } else if (query.includes('dance') || query.includes('edm') || query.includes('party')) {
+      station = 'dance';
+      title = 'Dance Music Radio';
+    } else if (query.includes('rock') || query.includes('metal')) {
+      station = 'rock';
+      title = 'Rock Music Radio';
+    } else if (query.includes('lofi') || query.includes('study') || query.includes('relax')) {
+      station = 'lofi';
+      title = 'Lo-fi Beats Radio';
     }
-    
-    const videoId = searchResults.id;
-    const title = searchResults.title;
-    
-    console.log(`[${new Date().toISOString()}] Found: ${title} (${videoId})`);
+
+    console.log(`[${new Date().toISOString()}] Found: ${title} (${station})`);
 
     res.json({
       success: true,
       title: title,
-      videoId: videoId,
-      streamUrl: `/stream/${videoId}`  // ESP32 will call this endpoint
+      videoId: station,
+      streamUrl: `/stream/${station}`
     });
 
   } catch (error) {
@@ -103,58 +94,46 @@ app.get('/search', async (req, res) => {
   }
 });
 
-// Stream endpoint - proxies audio from YouTube to ESP32
-app.get('/stream/:videoId', async (req, res) => {
-  const { videoId } = req.params;
+// Stream endpoint - proxies radio stream
+app.get('/stream/:station', async (req, res) => {
+  const { station } = req.params;
+
+  const streamUrl = RADIO_STATIONS[station];
+  
+  if (!streamUrl) {
+    return res.status(404).json({ 
+      success: false, 
+      error: 'Station not found' 
+    });
+  }
 
   try {
-    console.log(`[${new Date().toISOString()}] Streaming: ${videoId}`);
+    console.log(`[${new Date().toISOString()}] Streaming: ${station} -> ${streamUrl}`);
 
-    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    
-    // Get audio stream
-    const info = await ytdl.getInfo(videoUrl);
-    const audioFormat = ytdl.chooseFormat(info.formats, { 
-      quality: 'lowestaudio',
-      filter: 'audioonly'
-    });
-    
-    if (!audioFormat || !audioFormat.url) {
-      throw new Error('No audio stream found');
-    }
-
-    console.log(`[${new Date().toISOString()}] Proxying ${audioFormat.container} ${audioFormat.audioBitrate}kbps`);
-
-    // Set headers for ESP32
-    res.setHeader('Content-Type', audioFormat.mimeType || 'audio/mp4');
-    if (audioFormat.contentLength) {
-      res.setHeader('Content-Length', audioFormat.contentLength);
-    }
-
-    // Fetch from YouTube CDN and pipe to ESP32
-    https.get(audioFormat.url, (ytResponse) => {
-      if (ytResponse.statusCode !== 200) {
-        console.error(`[${new Date().toISOString()}] YouTube returned: ${ytResponse.statusCode}`);
-        if (!res.headersSent) {
-          res.status(500).end();
-        }
-        return;
+    // Proxy radio stream
+    https.get(streamUrl, (streamRes) => {
+      if (streamRes.statusCode !== 200) {
+        console.error(`[${new Date().toISOString()}] Radio returned: ${streamRes.statusCode}`);
+        return res.status(500).json({ success: false, error: 'Stream unavailable' });
       }
       
-      ytResponse.pipe(res);
+      // Copy headers
+      res.setHeader('Content-Type', streamRes.headers['content-type'] || 'audio/mpeg');
       
-      ytResponse.on('error', (err) => {
-        console.error(`[${new Date().toISOString()}] YouTube stream error:`, err.message);
+      streamRes.pipe(res);
+      
+      streamRes.on('error', (err) => {
+        console.error(`[${new Date().toISOString()}] Stream error:`, err.message);
       });
     }).on('error', (err) => {
-      console.error(`[${new Date().toISOString()}] HTTPS request error:`, err.message);
+      console.error(`[${new Date().toISOString()}] HTTPS error:`, err.message);
       if (!res.headersSent) {
-        res.status(500).end();
+        res.status(500).json({ success: false, error: err.message });
       }
     });
 
   } catch (error) {
-    console.error(`[${new Date().toISOString()}] Stream error:`, error.message);
+    console.error(`[${new Date().toISOString()}] Error:`, error.message);
     if (!res.headersSent) {
       res.status(500).json({ success: false, error: error.message });
     }
