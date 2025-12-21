@@ -40,10 +40,9 @@ app.get('/search', async (req, res) => {
   try {
     console.log(`[${new Date().toISOString()}] Searching: ${q}`);
 
-    // Try multiple extractor methods to bypass bot detection
-    // 1. Try ios client (most reliable as of 2024-12)
-    // 2. Fallback to web client if ios fails
-    const cmd = `yt-dlp -f "251/140/bestaudio" --extractor-args "youtube:player_client=ios" --get-url --get-title "ytsearch1:${q}"`;
+    // Use tv_embedded client - most reliable without requiring po_token (as of 2024-12)
+    // Format 251 = Opus (WebM), 140 = AAC (MP4)
+    const cmd = `yt-dlp -f "251/140/bestaudio" --extractor-args "youtube:player_client=tv_embedded" --get-url --get-title "ytsearch1:${q}"`;
     
     const { stdout, stderr } = await execPromise(cmd, {
       timeout: 30000 // 30s timeout
