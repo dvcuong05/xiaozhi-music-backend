@@ -68,16 +68,16 @@ const mcpServer = new Server(
     // Handle tool list requests
     mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
       logger.info('📋 Tool list requested');
-      return {
-        tools: validTools.map((tool) => {
-          const { name, description, zodSchema = z.object({}) } = tool;
-          return {
-            name,
-            description,
-            inputSchema: zodToJsonSchema(zodSchema) as any,
-          };
-        }),
-      };
+      const tools = validTools.map((tool) => {
+        const { name, description, zodSchema = z.object({}) } = tool;
+        const schema = zodToJsonSchema(zodSchema);
+        return {
+          name,
+          description,
+          inputSchema: schema as Record<string, unknown>,
+        };
+      });
+      return { tools };
     });
 
     // Handle tool call requests
