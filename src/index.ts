@@ -70,11 +70,12 @@ const mcpServer = new Server(
       logger.info('📋 Tool list requested');
       const tools = validTools.map((tool) => {
         const { name, description, zodSchema = z.object({}) } = tool;
-        const schema = zodToJsonSchema(zodSchema);
+        // Cast to any to avoid deep type instantiation
+        const schema: any = zodToJsonSchema(zodSchema);
         return {
           name,
           description,
-          inputSchema: schema as Record<string, unknown>,
+          inputSchema: schema,
         };
       });
       return { tools };
