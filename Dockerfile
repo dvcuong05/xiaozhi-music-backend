@@ -2,11 +2,22 @@ FROM node:18-slim
 
 WORKDIR /app
 
+# Copy package files
 COPY package*.json ./
-RUN npm install --production
+COPY tsconfig.json ./
 
-COPY . .
+# Install all dependencies (including devDependencies for build)
+RUN npm install
 
-EXPOSE 3000
+# Copy source code
+COPY src ./src
 
-CMD ["node", "index.js"]
+# Build TypeScript
+RUN npm run build
+
+# Remove devDependencies to reduce image size
+RUN npm prune --production
+
+# MCP server runs via stdio, no port needed
+
+CMD ["node", "dist/index.js"]
