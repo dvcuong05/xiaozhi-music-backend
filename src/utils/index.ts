@@ -1,13 +1,13 @@
 import type { ServerResult } from '@modelcontextprotocol/sdk/types.js';
 import { ZodError } from 'zod';
 import { fromZodError } from 'zod-validation-error';
-import type { Results, ToolConfig } from '../types';
+import type { Results, ToolConfig } from '../types.js';
 
-export * from './cache';
-export * from './dayjs';
-export * from './http';
-export * from './logger';
-export * from './rss';
+export * from './cache.js';
+export * from './dayjs.js';
+export * from './http.js';
+export * from './logger.js';
+export * from './rss.js';
 
 export const defineToolConfig = async (
   config: ToolConfig | (() => ToolConfig | Promise<ToolConfig>),

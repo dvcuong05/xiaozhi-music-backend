@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { http } from './http';
+import { http } from './http.js';
 
 export const getRss = async (url: string) => {
   const resp = await http.get(url);

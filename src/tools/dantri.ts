@@ -1,4 +1,4 @@
-import { defineToolConfig, getRssItems } from '../utils';
+import { defineToolConfig, getRssItems } from '../utils/index.js';
 
 export default defineToolConfig({
   name: 'get-dantri-news',
