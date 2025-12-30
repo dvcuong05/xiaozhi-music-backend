@@ -1,6 +1,6 @@
 import type { ServerResult } from '@modelcontextprotocol/sdk/types.js';
 import { ZodError } from 'zod';
-import { fromError } from 'zod-validation-error';
+import { fromZodError } from 'zod-validation-error';
 import type { Results, ToolConfig } from '../types';
 
 export * from './cache';
@@ -21,7 +21,7 @@ export const defineToolConfig = async (
 export const handleErrorResult = (error: unknown): ServerResult => {
   let errorMessage = '';
   if (error instanceof ZodError) {
-    errorMessage = fromError(error).toString();
+    errorMessage = fromZodError(error).toString();
   } else if (error instanceof Error) {
     errorMessage = error.message;
   } else {

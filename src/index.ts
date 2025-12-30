@@ -60,10 +60,14 @@ const mcpServer = new Server(
   try {
     const { toolConfigMap, validTools } = await loadToolConfigurations();
 
-    logger.info(`Loaded ${validTools.length} tools`);
+    logger.info(`✅ Loaded ${validTools.length} tools:`);
+    validTools.forEach(tool => {
+      logger.info(`  - ${tool.name}: ${tool.description.substring(0, 50)}...`);
+    });
 
     // Handle tool list requests
     mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
+      logger.info('📋 Tool list requested');
       return {
         tools: validTools.map((tool) => {
           const { name, description, zodSchema = z.object({}) } = tool;
@@ -79,24 +83,29 @@ const mcpServer = new Server(
     // Handle tool call requests
     mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
+        logger.info(`🔧 Tool called: ${request.params.name}`);
         const tool = toolConfigMap.get(request.params.name);
         if (!tool) {
           throw new Error(`Tool not found: ${request.params.name}`);
         }
         const result = await tool.func(request.params.arguments ?? {});
+        logger.info(`✅ Tool ${request.params.name} returned ${result.length} items`);
         return handleSuccessResult(result, request.params.name);
       } catch (error) {
+        logger.error(`❌ Tool ${request.params.name} failed: ${error}`);
         return handleErrorResult(error);
       }
     });
 
     // Kết nối tới Xiaozhi API qua WebSocket
-    logger.info(`Connecting to Xiaozhi API at: ${XIAOZHI_WS_URL}`);
+    logger.info(`🔌 Connecting to Xiaozhi API at: ${XIAOZHI_WS_URL}`);
+    logger.info(`🎫 Using token: ${XIAOZHI_TOKEN.substring(0, 50)}...`);
     const transport = new WebSocketClientTransport(wsUrl);
     await transport.start();
     await mcpServer.connect(transport);
     
-    logger.info('VN News MCP Server connected to Xiaozhi API successfully');
+    logger.info('🎉 VN News MCP Server connected to Xiaozhi API successfully');
+    logger.info(`📡 Server is now listening for requests with ${validTools.length} tools available`);
     
     // Keep the process alive
     process.on('SIGINT', async () => {

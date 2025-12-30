@@ -5,9 +5,6 @@ import { logger } from '../utils/logger.js';
 
 export class WebSocketClientTransport implements Transport {
   private ws: WebSocket | null = null;
-  private messageHandler: ((message: JSONRPCMessage) => void) | null = null;
-  private closeHandler: (() => void) | null = null;
-  private errorHandler: ((error: Error) => void) | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
   private reconnectDelay = 5000;
@@ -17,11 +14,11 @@ export class WebSocketClientTransport implements Transport {
   async start(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
-        logger.info(`Connecting to WebSocket: ${this.url}`);
+        logger.info(`🔌 Initiating WebSocket connection to: ${this.url}`);
         this.ws = new WebSocket(this.url);
 
         this.ws.on('open', () => {
-          logger.info('WebSocket connection established');
+          logger.info('✅ WebSocket connection established successfully');
           this.reconnectAttempts = 0;
           resolve();
         });
@@ -29,27 +26,22 @@ export class WebSocketClientTransport implements Transport {
         this.ws.on('message', (data: WebSocket.Data) => {
           try {
             const message = JSON.parse(data.toString()) as JSONRPCMessage;
-            if (this.messageHandler) {
-              this.messageHandler(message);
-            }
+            logger.info(`📩 Received message: ${JSON.stringify(message).substring(0, 100)}...`);
+            this.onmessage?.(message);
           } catch (error) {
-            logger.error(`Failed to parse message: ${error}`);
+            logger.error(`❌ Failed to parse message: ${error}`);
           }
         });
 
         this.ws.on('close', () => {
           logger.warn('WebSocket connection closed');
-          if (this.closeHandler) {
-            this.closeHandler();
-          }
+          this.onclose?.();
           this.attemptReconnect();
         });
 
         this.ws.on('error', (error) => {
           logger.error(`WebSocket error: ${error.message}`);
-          if (this.errorHandler) {
-            this.errorHandler(error);
-          }
+          this.onerror?.(error);
           reject(error);
         });
       } catch (error) {
@@ -97,15 +89,8 @@ export class WebSocketClientTransport implements Transport {
     }
   }
 
-  onmessage(handler: (message: JSONRPCMessage) => void): void {
-    this.messageHandler = handler;
-  }
-
-  onclose(handler: () => void): void {
-    this.closeHandler = handler;
-  }
-
-  onerror(handler: (error: Error) => void): void {
-    this.errorHandler = handler;
-  }
+  // Properties required by Transport interface
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: (message: JSONRPCMessage) => void;
 }
