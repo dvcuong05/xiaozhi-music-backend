@@ -97,6 +97,15 @@ const mcpServer = new Server(
       }
     });
 
+    // Handle ping requests to keep connection alive
+    mcpServer.setRequestHandler(
+      { method: 'ping' } as any,
+      async () => {
+        logger.info('🏓 Pong! Responding to ping');
+        return {};
+      }
+    );
+
     // Kết nối tới Xiaozhi API qua WebSocket
     logger.info(`🔌 Connecting to Xiaozhi API at: ${XIAOZHI_WS_URL}`);
     logger.info(`🎫 Using token: ${XIAOZHI_TOKEN.substring(0, 50)}...`);
