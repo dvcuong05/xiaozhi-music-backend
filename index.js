@@ -1,152 +1,127 @@
-const express = require('express');
-const https = require('https');
-const http = require('http');
+#!/usr/bin/env node
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
+import zodToJsonSchema from 'zod-to-json-schema';
+import type { ToolConfig } from './types.js';
+import { handleErrorResult, handleSuccessResult, logger } from './utils/index.js';
+import { WebSocketClientTransport } from './transports/websocket.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
 
-// Free MP3 radio stations (always available, no auth needed)
-const RADIO_STATIONS = {
-  'chill': 'http://ice1.somafm.com/groovesalad-128-mp3',      // Chill/Ambient
-  'pop': 'http://ice1.somafm.com/indiepop-128-mp3',           // Indie Pop
-  'electronic': 'http://ice1.somafm.com/defcon-128-mp3',      // Electronic
-  'rock': 'http://ice1.somafm.com/deepspaceone-128-mp3',      // Space Rock
-  'lofi': 'http://ice1.somafm.com/fluid-128-mp3',             // Lo-fi beats
-};
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// CORS for ESP32
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  next();
-});
+// Lấy WebSocket URL và token từ environment variables
+const XIAOZHI_WS_URL = process.env.XIAOZHI_WS_URL || 'wss://api.xiaozhi.me/mcp/';
+const XIAOZHI_TOKEN = process.env.XIAOZHI_TOKEN || 'eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjY5MjYzMiwiYWdlbnRJZCI6MTE0ODM1NywiZW5kcG9pbnRJZCI6ImFnZW50XzExNDgzNTciLCJwdXJwb3NlIjoibWNwLWVuZHBvaW50IiwiaWF0IjoxNzY3MDcwMzUxLCJleHAiOjE3OTg2Mjc5NTF9.8bW9DmY5cDf5ug7PREMUThk7vhh2OYe9qVIB2b3Fl7dZTlyFxoIGu9JhQw_jOf-HZCr97jClktB1b3y9yKminA';
+const wsUrl = `${XIAOZHI_WS_URL}?token=${XIAOZHI_TOKEN}`;
 
-// Health check endpoint
-app.get('/', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    service: 'Xiaozhi Music API',
-    endpoints: ['/search?q=genre', '/stations'],
-    stations: Object.keys(RADIO_STATIONS)
-  });
-});
-
-// List available stations
-app.get('/stations', (req, res) => {
-  res.json({
-    success: true,
-    stations: RADIO_STATIONS
-  });
-});
-
-// Search endpoint - maps keywords to radio stations
-app.get('/search', async (req, res) => {
-  const { q } = req.query;
-
-  if (!q) {
-    return res.status(400).json({ 
-      success: false, 
-      error: 'Missing query parameter: q' 
-    });
-  }
-
-  try {
-    console.log(`[${new Date().toISOString()}] Searching: ${q}`);
-
-    const query = q.toLowerCase();
-    let station = 'chill'; // default
-    let title = 'Chill Music Radio';
-
-    // Simple keyword matching
-    if (query.includes('pop') || query.includes('hit')) {
-      station = 'pop';
-      title = 'Pop Hits Radio';
-    } else if (query.includes('dance') || query.includes('edm') || query.includes('party')) {
-      station = 'dance';
-      title = 'Dance Music Radio';
-    } else if (query.includes('rock') || query.includes('metal')) {
-      station = 'rock';
-      title = 'Rock Music Radio';
-    } else if (query.includes('lofi') || query.includes('study') || query.includes('relax')) {
-      station = 'lofi';
-      title = 'Lo-fi Beats Radio';
-    }
-
-    console.log(`[${new Date().toISOString()}] Found: ${title} (${station})`);
-
-    res.json({
-      success: true,
-      title: title,
-      videoId: station,
-      streamUrl: `/stream/${station}`
-    });
-
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] Error:`, error.message);
-    
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Stream endpoint - proxies radio stream
-app.get('/stream/:station', async (req, res) => {
-  const { station } = req.params;
-
-  const streamUrl = RADIO_STATIONS[station];
+async function loadToolConfigurations() {
+  const toolsDir = path.join(__dirname, 'tools');
+  const toolFiles = fs.readdirSync(toolsDir).filter(file => file.endsWith('.js'));
   
-  if (!streamUrl) {
-    return res.status(404).json({ 
-      success: false, 
-      error: 'Station not found' 
-    });
-  }
-
-  try {
-    console.log(`[${new Date().toISOString()}] Streaming: ${station} -> ${streamUrl}`);
-
-    // Proxy radio stream (use http for SomaFM)
-    http.get(streamUrl, (streamRes) => {
-      if (streamRes.statusCode !== 200) {
-        console.error(`[${new Date().toISOString()}] Radio returned: ${streamRes.statusCode}`);
-        return res.status(500).json({ success: false, error: 'Stream unavailable' });
-      }
-      
-      // Copy headers
-      res.setHeader('Content-Type', streamRes.headers['content-type'] || 'audio/mpeg');
-      
-      streamRes.pipe(res);
-      
-      streamRes.on('error', (err) => {
-        console.error(`[${new Date().toISOString()}] Stream error:`, err.message);
-      });
-    }).on('error', (err) => {
-      console.error(`[${new Date().toISOString()}] HTTPS error:`, err.message);
-      if (!res.headersSent) {
-        res.status(500).json({ success: false, error: err.message });
-      }
-    });
-
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] Error:`, error.message);
-    if (!res.headersSent) {
-      res.status(500).json({ success: false, error: error.message });
+  const toolPromises = toolFiles.map(async (file) => {
+    try {
+      const toolPath = path.join(toolsDir, file);
+      const toolModule = await import(pathToFileURL(toolPath).href);
+      return toolModule.default;
+    } catch (error) {
+      logger.error(`Failed to load tool from ${file}: ${error}`);
+      return null;
     }
+  });
+
+  const validTools = (await Promise.all(toolPromises)).filter((tool): tool is ToolConfig => !!tool);
+  const toolConfigMap = new Map(validTools.map((tool) => [tool.name, tool]));
+
+  return {
+    toolConfigMap,
+    validTools,
+  };
+}
+
+const mcpServer = new Server(
+  {
+    name: 'VN News Hub',
+    version: '1.0.0',
+  },
+  {
+    capabilities: {
+      tools: {},
+      logging: {},
+    },
+  },
+);
+
+(async () => {
+  try {
+    const { toolConfigMap, validTools } = await loadToolConfigurations();
+
+    logger.info(`✅ Loaded ${validTools.length} tools:`);
+    validTools.forEach(tool => {
+      logger.info(`  - ${tool.name}: ${tool.description.substring(0, 50)}...`);
+    });
+
+    // Handle tool list requests
+    mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
+      logger.info('📋 Tool list requested');
+      const tools = [];
+      for (const tool of validTools) {
+        const { name, description, zodSchema = z.object({}) } = tool;
+        tools.push({
+          name,
+          description,
+          inputSchema: (zodToJsonSchema as any)(zodSchema as any),
+        });
+      }
+      return { tools };
+    });
+
+    // Handle tool call requests
+    mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
+      try {
+        logger.info(`🔧 Tool called: ${request.params.name}`);
+        const tool = toolConfigMap.get(request.params.name);
+        if (!tool) {
+          throw new Error(`Tool not found: ${request.params.name}`);
+        }
+        const result = await tool.func(request.params.arguments ?? {});
+        logger.info(`✅ Tool ${request.params.name} returned ${result.length} items`);
+        return handleSuccessResult(result, request.params.name);
+      } catch (error) {
+        logger.error(`❌ Tool ${request.params.name} failed: ${error}`);
+        return handleErrorResult(error);
+      }
+    });
+
+    // Kết nối tới Xiaozhi API qua WebSocket
+    logger.info(`🔌 Connecting to Xiaozhi API at: ${XIAOZHI_WS_URL}`);
+    logger.info(`🎫 Using token: ${XIAOZHI_TOKEN.substring(0, 50)}...`);
+    const transport = new WebSocketClientTransport(wsUrl);
+    await transport.start();
+    await mcpServer.connect(transport);
+    
+    logger.info('🎉 VN News MCP Server connected to Xiaozhi API successfully');
+    logger.info(`📡 Server is now listening for requests with ${validTools.length} tools available`);
+    
+    // Keep the process alive
+    process.on('SIGINT', async () => {
+      logger.info('Shutting down...');
+      await transport.close();
+      process.exit(0);
+    });
+
+    process.on('SIGTERM', async () => {
+      logger.info('Shutting down...');
+      await transport.close();
+      process.exit(0);
+    });
+  } catch (error) {
+    logger.error('Failed to start MCP server');
+    logger.error(error);
+    process.exit(1);
   }
-});
-
-// Error handling
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ success: false, error: 'Internal server error' });
-});
-
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🎵 Xiaozhi Music API running on port ${PORT}`);
-});
+})();
